@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yapper</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="logo.png">
+    <style>
+        body { font-family: -apple-system, sans-serif; background: #0d1117; color: white; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* Login View */
+        #auth-view { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 12px; padding: 20px; text-align: center; }
+        .logo { width: 100px; height: 100px; border-radius: 22%; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        
+        /* Chat View */
+        #chat-view { display: none; flex-direction: column; height: 100%; }
+        .header { padding: 15px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+        #status-bar { font-size: 12px; color: #2ea043; display: flex; align-items: center; gap: 5px; margin-top: 2px; }
+        .online-dot { width: 8px; height: 8px; background: #238636; border-radius: 50%; box-shadow: 0 0 5px #2ea043; }
+        
+        /* Messages Area */
+        #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .msg-container { display: flex; flex-direction: column; max-width: 75%; }
+        .sent-container { align-self: flex-end; align-items: flex-end; }
+        .received-container { align-self: flex-start; align-items: flex-start; }
+        
+        .msg { padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.4; }
+        .sent { background: #238636; border-bottom-right-radius: 2px; }
+        .received { background: #30363d; border-bottom-left-radius: 2px; }
+        
+        .user-label { font-size: 10px; opacity: 0.5; margin-bottom: 2px; }
+        .status-label { font-size: 10px; opacity: 0.4; margin-top: 2px; font-weight: bold; }
+        
+        #typing-indicator { padding: 5px 20px; font-size: 12px; color: #2ea043; height: 20px; font-style: italic; }
+        
+        /* Input Area */
+        .input-area { padding: 15px; background: #161b22; display: flex; gap: 10px; border-top: 1px solid #30363d; }
+        input[type="text"], input[type="email"], input[type="password"] { padding: 12px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: white; flex: 1; outline: none; }
+        button { padding: 10px 20px; background: #238636; border: none; color: white; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        .btn-alt { background: #30363d; }
+    </style>
+</head>
+<body>
+
+    <div id="auth-view">
+        <img src="logo.png" alt="Yapper" class="logo">
+        <h1 style="margin: 0;">Yapper</h1>
+        <p style="margin-top: -5px; opacity: 0.6;">Start yapping...</p>
+        <input type="email" id="email" placeholder="Email">
+        <input type="password" id="password" placeholder="Password">
+        <button id="btn-login" style="width: 240px;">Login</button>
+        <button id="btn-signup" class="btn-alt" style="width: 240px;">Join the yap</button>
+    </div>
+
+    <div id="chat-view">
+        <div class="header">
+            <div>
+                <strong>Yapper</strong>
+                <div id="status-bar"></div>
+            </div>
+            <button id="btn-logout" style="background:#da3633; font-size:11px; padding:5px 8px;">Logout</button>
+        </div>
+        <div id="messages"></div>
+        <div id="typing-indicator"></div>
+        <div class="input-area">
+            <input type="text" id="msg-input" placeholder="Type a message...">
+            <button id="btn-send">Send</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, setDoc, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyB98LWEjfYaG_wbkMkwo0QJ4ch8VhQO-IA",
+            authDomain: "messengerapp-dcccc.firebaseapp.com",
+            projectId: "messengerapp-dcccc",
+            storageBucket: "messengerapp-dcccc.firebasestorage.app",
+            messagingSenderId: "255835922798",
+            appId: "1:255835922798:web:d9293fc275ae2b18fa617f"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        const authView = document.getElementById('auth-view');
+        const chatView = document.getElementById('chat-view');
+        const msgDiv = document.getElementById('messages');
+        const msgInput = document.getElementById('msg-input');
+        const typingDiv = document.getElementById('typing-indicator');
+        const statusBar = document.getElementById('status-bar');
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                authView.style.display = 'none';
+                chatView.style.display = 'flex';
+                setUserOnline();
+                listenForYaps();
+                listenForTyping();
+                listenForPresence();
+            } else {
+                authView.style.display = 'flex';
+                chatView.style.display = 'none';
+            }
+        });
+
+        function setUserOnline() {
+            const userRef = doc(db, "presence", auth.currentUser.uid);
+            setDoc(userRef, { email: auth.currentUser.email });
+            window.addEventListener('beforeunload', () => deleteDoc(userRef));
+        }
+
+        function listenForPresence() {
+            onSnapshot(collection(db, "presence"), (snap) => {
+                let count = 0; snap.forEach(() => count++);
+                statusBar.innerHTML = `<div class="online-dot"></div> ${count} yappers online`;
+            });
+        }
+
+        document.getElementById('btn-send').onclick = async () => {
+            const text = msgInput.value.trim();
+            if (text) {
+                await addDoc(collection(db, "messages"), {
+                    text: text,
+                    user: auth.currentUser.email,
+                    uid: auth.currentUser.uid,
+                    seen: false,
+                    timestamp: serverTimestamp()
+                });
+                msgInput.value = '';
+                deleteDoc(doc(db, "typing", auth.currentUser.uid));
+            }
+        };
+
+        function listenForYaps() {
+            const q = query(collection(db, "messages"), orderBy("timestamp", "asc"));
+            onSnapshot(q, (snapshot) => {
+                msgDiv.innerHTML = '';
+                snapshot.forEach(d => {
+                    const data = d.data();
+                    const isMe = data.uid === auth.currentUser.uid;
+                    if (!isMe && !data.seen) updateDoc(doc(db, "messages", d.id), { seen: true });
+
+                    const div = document.createElement('div');
+                    div.className = `msg-container ${isMe ? 'sent-container' : 'received-container'}`;
+                    div.innerHTML = `
+                        <small class="user-label">${data.user.split('@')[0]}</small>
+                        <div class="msg ${isMe ? 'sent' : 'received'}">${data.text}</div>
+                        ${isMe && data.seen ? '<small class="status-label">Seen</small>' : ''}
+                    `;
+                    msgDiv.appendChild(div);
+                });
+                msgDiv.scrollTop = msgDiv.scrollHeight;
+            });
+        }
+
+        msgInput.addEventListener('input', () => {
+            if (auth.currentUser) {
+                setDoc(doc(db, "typing", auth.currentUser.uid), { email: auth.currentUser.email });
+                setTimeout(() => deleteDoc(doc(db, "typing", auth.currentUser.uid)), 2000);
+            }
+        });
+
+        function listenForTyping() {
+            onSnapshot(collection(db, "typing"), (snap) => {
+                const typers = [];
+                snap.forEach(d => { if(d.id !== auth.currentUser.uid) typers.push(d.data().email.split('@')[0]); });
+                typingDiv.innerText = typers.length > 0 ? typers.join(', ') + " is yapping..." : "";
+            });
+        }
+
+        document.getElementById('btn-login').onclick = () => signInWithEmailAndPassword(auth, email.value, password.value).catch(alert);
+        document.getElementById('btn-signup').onclick = () => createUserWithEmailAndPassword(auth, email.value, password.value).catch(alert);
+        document.getElementById('btn-logout').onclick = () => signOut(auth);
+
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js');
+        }
+    </script>
+</body>
+</html>
